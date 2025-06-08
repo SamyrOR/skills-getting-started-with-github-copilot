@@ -7,31 +7,49 @@ document.addEventListener("DOMContentLoaded", () => {
   // Function to fetch activities from API
   async function fetchActivities() {
     try {
+      console.log("Fetching activities...");
       const response = await fetch("/activities");
-      const activities = await response.json();
+      console.log("Response status:", response.status);
+      const responseText = await response.text();
+      console.log("Response text:", responseText);
+      
+      // Tenta converter o texto em JSON
+      let activitiesData;
+      try {
+        activitiesData = JSON.parse(responseText);
+        console.log("Parsed JSON data:", activitiesData);
+        // Assegurar que activitiesData é um array
+        if (!Array.isArray(activitiesData)) {
+          console.log("activitiesData não é um array, é um:", typeof activitiesData);
+          throw new Error("Response is not an array");
+        }
+      } catch (jsonError) {
+        console.error("Error parsing JSON:", jsonError);
+        throw new Error("Invalid JSON response");
+      }
 
       // Limpa mensagens e listas
       activitiesList.innerHTML = "";
       activitySelect.innerHTML = '<option value="">-- Select an activity --</option>';
 
       // Popula lista de atividades
-      Object.entries(activities).forEach(([name, details]) => {
+      activitiesData.forEach((activity) => {
         const activityCard = document.createElement("div");
         activityCard.className = "activity-card";
 
-        const spotsLeft = details.max_participants - details.participants.length;
+        const spotsLeft = activity.max_participants - activity.participants.length;
 
         // Cria a lista de participantes (se houver)
         let participantsHTML = "";
-        if (details.participants && details.participants.length > 0) {
+        if (activity.participants && activity.participants.length > 0) {
           participantsHTML = `
             <div class="participants-section">
               <strong>Participants:</strong>
               <ul class="participants-list">
-                ${details.participants.map(email => `
+                ${activity.participants.map(email => `
                   <li class="participant-item">
                     <span class="participant-email">${email}</span>
-                    <span class="delete-participant" title="Unregister" data-activity="${name}" data-email="${email}">
+                    <span class="delete-participant" title="Unregister" data-activity="${activity.name}" data-email="${email}">
                       🗑️
                     </span>
                   </li>
@@ -49,9 +67,9 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         activityCard.innerHTML = `
-          <h4>${name}</h4>
-          <p>${details.description}</p>
-          <p><strong>Schedule:</strong> ${details.schedule}</p>
+          <h4>${activity.name}</h4>
+          <p>${activity.description}</p>
+          <p><strong>Schedule:</strong> ${activity.schedule}</p>
           <p><strong>Availability:</strong> ${spotsLeft} spots left</p>
           ${participantsHTML}
         `;
@@ -60,8 +78,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
         // Adiciona opção ao select
         const option = document.createElement("option");
-        option.value = name;
-        option.textContent = name;
+        option.value = activity.name;
+        option.textContent = activity.name;
         activitySelect.appendChild(option);
       });
 
@@ -97,8 +115,8 @@ document.addEventListener("DOMContentLoaded", () => {
         });
       });
     } catch (error) {
-      activitiesList.innerHTML = "<p>Failed to load activities. Please try again later.</p>";
       console.error("Error fetching activities:", error);
+      activitiesList.innerHTML = `<p>Failed to load activities: ${error.message}. Please try again later.</p>`;
     }
   }
 
