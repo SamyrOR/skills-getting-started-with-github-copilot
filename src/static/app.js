@@ -116,7 +116,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     } catch (error) {
       console.error("Error fetching activities:", error);
-      activitiesList.innerHTML = `<p>Failed to load activities: ${error.message}. Please try again later.</p>`;
+      activitiesList.innerHTML = `<p>Failed to load activities. Please try again later.</p>`;
     }
   }
 
