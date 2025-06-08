@@ -8,19 +8,49 @@ for extracurricular activities at Mergington High School.
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import RedirectResponse
+from fastapi.middleware.cors import CORSMiddleware
 import os
 from pathlib import Path
+from pymongo import MongoClient
+from bson.json_util import dumps, loads
+import json
+import logging
+
+# Configuração de logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# MongoDB setup com tratamento de erro
+try:
+    client = MongoClient('localhost', 27017)
+    # Verifica se a conexão está funcionando
+    client.admin.command('ping')
+    logger.info("Conexão com MongoDB estabelecida com sucesso!")
+    db = client.school_activities
+    activities_collection = db.activities
+except Exception as e:
+    logger.error(f"Erro ao conectar ao MongoDB: {e}")
+    raise
 
 app = FastAPI(title="Mergington High School API",
               description="API for viewing and signing up for extracurricular activities")
+
+# Configurar CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Permitir todas as origens
+    allow_credentials=True,
+    allow_methods=["*"],  # Permitir todos os métodos
+    allow_headers=["*"],  # Permitir todos os cabeçalhos
+)
 
 # Mount the static files directory
 current_dir = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=os.path.join(Path(__file__).parent,
           "static")), name="static")
 
-# In-memory activity database
-activities = {
+# Initial activities data (used to pre-populate MongoDB)
+initial_activities = {
     "Chess Club": {
         "description": "Learn strategies and compete in chess tournaments",
         "schedule": "Fridays, 3:30 PM - 5:00 PM",
@@ -38,8 +68,71 @@ activities = {
         "schedule": "Mondays, Wednesdays, Fridays, 2:00 PM - 3:00 PM",
         "max_participants": 30,
         "participants": ["john@mergington.edu", "olivia@mergington.edu"]
+    },
+    # Sports related activities
+    "Soccer Team": {
+        "description": "Join the school soccer team and compete in local leagues",
+        "schedule": "Tuesdays and Thursdays, 4:00 PM - 5:30 PM",
+        "max_participants": 18,
+        "participants": ["lucas@mergington.edu", "mia@mergington.edu"]
+    },
+    "Basketball Club": {
+        "description": "Practice basketball skills and play friendly matches",
+        "schedule": "Wednesdays, 3:30 PM - 5:00 PM",
+        "max_participants": 15,
+        "participants": ["liam@mergington.edu", "ava@mergington.edu"]
+    },
+    # Artistic activities
+    "Art Club": {
+        "description": "Explore painting, drawing, and other visual arts",
+        "schedule": "Mondays, 3:30 PM - 5:00 PM",
+        "max_participants": 16,
+        "participants": ["ella@mergington.edu", "noah@mergington.edu"]
+    },
+    "Drama Society": {
+        "description": "Participate in theater productions and acting workshops",
+        "schedule": "Fridays, 4:00 PM - 6:00 PM",
+        "max_participants": 20,
+        "participants": ["amelia@mergington.edu", "jack@mergington.edu"]
+    },
+    # Intellectual activities
+    "Math Olympiad": {
+        "description": "Prepare for math competitions and solve challenging problems",
+        "schedule": "Thursdays, 3:30 PM - 5:00 PM",
+        "max_participants": 10,
+        "participants": ["ethan@mergington.edu", "grace@mergington.edu"]
+    },
+    "Debate Club": {
+        "description": "Develop public speaking and argumentation skills",
+        "schedule": "Wednesdays, 4:00 PM - 5:30 PM",
+        "max_participants": 14,
+        "participants": ["harper@mergington.edu", "benjamin@mergington.edu"]
     }
 }
+
+# Function to initialize the MongoDB database with initial activities
+def init_db():
+    try:
+        # Drop existing collection to start fresh
+        activities_collection.drop()
+        
+        # Insert each activity with its name as the key
+        for name, details in initial_activities.items():
+            activities_collection.insert_one({
+                "name": name,
+                "description": details["description"],
+                "schedule": details["schedule"],
+                "max_participants": details["max_participants"],
+                "participants": details["participants"]
+            })
+        
+        logger.info("Database initialized with activities data")
+    except Exception as e:
+        logger.error(f"Erro ao inicializar o banco de dados: {e}")
+        raise
+
+# Initialize database on startup
+init_db()
 
 
 @app.get("/")
@@ -49,19 +142,47 @@ def root():
 
 @app.get("/activities")
 def get_activities():
-    return activities
+    try:
+        activities = list(activities_collection.find())
+        logger.info(f"Encontradas {len(activities)} atividades")
+        # Converte ObjectId para string em cada documento para serialização JSON adequada
+        activities_json = json.loads(dumps(activities))
+        return activities_json
+    except Exception as e:
+        logger.error(f"Erro ao buscar atividades: {e}")
+        raise HTTPException(status_code=500, detail=f"Erro ao buscar atividades: {str(e)}")
 
 
 @app.post("/activities/{activity_name}/signup")
 def signup_for_activity(activity_name: str, email: str):
     """Sign up a student for an activity"""
     # Validate activity exists
-    if activity_name not in activities:
+    activity = activities_collection.find_one({"name": activity_name})
+    if not activity:
         raise HTTPException(status_code=404, detail="Activity not found")
 
-    # Get the specific activity
-    activity = activities[activity_name]
+    # Validate student is not already signed up
+    if email in activity["participants"]:
+        raise HTTPException(status_code=400, detail="Student already signed up for this activity")
 
     # Add student
-    activity["participants"].append(email)
+    activities_collection.update_one(
+        {"name": activity_name},
+        {"$addToSet": {"participants": email}}
+    )
     return {"message": f"Signed up {email} for {activity_name}"}
+
+
+@app.delete("/activities/{activity_name}/unregister")
+def unregister_from_activity(activity_name: str, email: str):
+    """Remove a student from an activity"""
+    activity = activities_collection.find_one({"name": activity_name})
+    if not activity:
+        raise HTTPException(status_code=404, detail="Activity not found")
+    if email not in activity["participants"]:
+        raise HTTPException(status_code=404, detail="Student not registered for this activity")
+    activities_collection.update_one(
+        {"name": activity_name},
+        {"$pull": {"participants": email}}
+    )
+    return {"message": f"Unregistered {email} from {activity_name}"}
